@@ -1,5 +1,8 @@
 # P+ individual contribution
-P+ work for Assignment 4.
+P+ work for Assignment 4. Main files, from branch [`2-implement-limiter-class`](https://github.com/Glace97/loguru/tree/2-implement-limiter-class):
+- [`loguru/_logger.py`](https://github.com/Glace97/loguru/blob/2-implement-limiter-class/loguru/_logger.py)
+- [`loguru/_limiter.py.py`](https://github.com/Glace97/loguru/blob/2-implement-limiter-class/loguru/_limiter.py)
+- [`tests/test_limiter.py`](https://github.com/Glace97/loguru/blob/2-implement-limiter-class/tests/test_limiter.py)
 
 ## 2. Work in relation to project
 
