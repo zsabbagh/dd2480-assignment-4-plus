@@ -18,8 +18,8 @@ would change in the main logger, i.e. `_logger.py` file.
 By creating a separate class, it would be easy to ensure functionality.
 Furthermore, by doing so, it was simple to just add the functionality
 of adding a `_limit` field in the main class.
-This could be done during initialisation with the `limit=(None, None)`
-field, where the tuple signifies `(count, interval)`.
+This could be done during initialisation with the `limit=None`, `interval=(int, str)`, `overflow_msg=None`
+fields, where the tuple signifies `(time:int, unit:str)`.
 There is a function added for adding a `limit` after creation:
 
 ```python
@@ -59,7 +59,7 @@ object within a `sink`.
 This is not a simple task, as it would require a more profound
 understanding of the ins-and-outs of the project.
 Further, it is worth mentioning that this, really, is already possible
-with the new-`Logger` creation with the flag `copy=2`, etc.
+with the new-`Logger` creation with the flag `copy=2` paremeter.
 
 ## 3. Relevant Test Cases
 
@@ -101,9 +101,8 @@ write as many values as expected.
 6. Overflow message. `test_logger_overflow_message` tests this functionality by
 asserting that there are only one overflow message.
 7. 100% code coverage. `wipe()` for wiping `__tracker` is tested by
-`test_logger_wipe_limit`. Currently 97%, the only non-tested ones are minutes and hours.
-The reason for this is that it would be very inefficient tests, cut the code is very
-simple and could be reasoned about.
+`test_logger_wipe_limit`. Minutes and hours are also tested during the 
+time testing.
 
 
 ## 4. Clean Code
@@ -160,7 +159,7 @@ This is really an issue on use rather than design problem,
 i.e. that the user should have a sufficient understanding of
 using the library before logging such 'distinct' messages.
 
-## 7. Extraordinary
+## 7. Something Remarkable
 
 I feel that my work is great and is thoroughly tested.
 I am proud of my work, and believe I have done something
