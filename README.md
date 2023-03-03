@@ -119,6 +119,9 @@ It follows the requirements since it:
 3. does not add unnecessary whitespace changes (such as adding or removing empty lines)
 
 As mentioned, `pylint` verifies linting passes.
+Proof of this lies in the [diff.txt](diff.txt) file,
+which is basically a `git diff master 2-implement-limiter-class`
+command run.
 
 ## 6. Benefits and Drawbacks
 
@@ -158,6 +161,82 @@ it would not be limited as a result of this.
 This is really an issue on use rather than design problem,
 i.e. that the user should have a sufficient understanding of
 using the library before logging such 'distinct' messages.
+
+Below are further benefits and drawbacks of the current
+implementation, when seen from different Alpha's within the 
+SEMAT kernel framework.
+
+### Requirements Alpha
+
+The benefits of the current solution, when seen from the
+perspective of requirements, is that it fulfils all specified technical 
+requirements. Since testing is extensive and coverage is 100%,
+one could argue that the algorithms are correct and thoroughly tested,
+which again is another requirement.
+Further potential requirements are the [way of contributing](https://loguru.readthedocs.io/en/stable/project/contributing.html),
+which arguably are fulfilled to the extent seen appropriate.
+The loose coupling of the class `Limiter` to the 
+main class `Logger` is also beneficial in seen of
+more general software engineering practices.
+
+There are several potential drawbacks, as mentioned earlier.
+One is the fact that testing has not been done on co-routines
+and concurrent threads, which arguably is less convenient and
+possibly redundant when testing the actual class `Limiter`.
+It might be necessary to implement locks to prevent data races,
+but as this has not been part of the main requirements,
+this has not been highly prioritised. This is one drawback,
+or rather *potential* lack of functionality.
+
+### Software System Alpha
+
+When seen from this Alpha, loose coupling towards the already
+existing classes and functions is preferred.
+The reason for this, is that it for each stakeholder (including
+the owner of the project), user, and contributor, a separate 
+class for the work improves the overview of the work.
+Unit testing becomes easier and verification that the requirements
+are fulfilled becomes arguably more doable.
+Further, the very least modifications have been done in
+regards to the `master` branch, which
+could be seen in the [diff.txt](diff.txt) file.
+
+Problems with the current implementation, when seen from this perspective,
+might be a matter of naming and such practices.
+Currently, for example, the input parameters in the `Logger` class
+are separate in the form of `limit`, which is the count limit, 
+`interval` which specifies the time interval, and `overflow_msg`, 
+which specifies the message to be received when the limit is reached.
+There might be thoughts and ideas on how one could do this differently,
+but these are minor modifications and really is something that one could
+hold a discussion about in the open source project.
+
+### Opportunity & Stakeholder Alpha
+
+These two Alphas are combined since the benefits of the current
+solution concern both of them.
+The main benefit is exactly the refactoring of the solution
+to a separate class. For each stakeholder, and for impact on
+future work on the project (the value here is seen as an opportunity),
+such loose coupling and also high cohesion of the purpose of each
+class is valued highly.
+When such separate and well defined functionalities are refactored
+to separate classes, such in this case the `Logger` and `Limiter`,
+it is very easy to abstract away such functionality
+and continue the work on the project as an *outsider* (i.e. 
+someone with very little previous knowledge of the project).
+If one can entrust the previous work and rely on that it is 
+properly tested, which gets much easier when something
+is a separate class, it gets much more feasible to also
+start contributing and expanding the project.
+
+Whether the actual solution holds the exact same standard as
+the owner (Delgan) would want, it is hard to tell, so there
+might obviously be some areas of improvement.
+However, I truly believe that the design choices made in this
+solution is beneficial for the stakeholders (users, contributors, etc)
+and therefore drawbacks are a matter of further discussion and
+input from such stakeholders.
 
 ## 7. Something Remarkable
 

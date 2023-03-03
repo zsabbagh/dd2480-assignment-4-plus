@@ -1,0 +1,513 @@
+diff --git a/loguru/_limiter.py b/loguru/_limiter.py
+new file mode 100644
+index 0000000..7186376
+--- /dev/null
++++ b/loguru/_limiter.py
+@@ -0,0 +1,127 @@
++"""
++    Limiter class for Logger,
++    purpose is to rate-limit messages or
++    simply just allow the n first messages.
++"""
++import time
++
++class Limiter:
++    """
++        A class for tracking information sent
++    """
++
++    def __init__(self, limit=None, interval=(None, 's'), sliding=False, message=None):
++        """
++            Time limit is in minutes.
++            Interval is (time [int], unit [s, m, h]) or int for seconds,
++            where default is unit in seconds.
++            sliding sets if the window should be sliding
++        """
++        self.__tracker = {}
++        self.__limit = limit
++        self.__interval = None
++        self.__sliding = sliding
++        self._message = message
++        self.__first_reach = False
++        # Default is seconds
++        self.__divide = 1.0
++        if isinstance(interval, tuple):
++            if len(interval) > 0:
++                self.__interval = interval[0]
++            if len(interval) > 1:
++                unit = interval[1]
++                if unit == 'm':
++                    self.__divide = 60.0
++                elif unit == 'h':
++                    self.__divide = 3600.0
++        if type(interval) in [float, int]:
++            self.__interval = float(interval)
++
++    def __interval_reached(self, info):
++        """
++            Returns true if it was more than
++            self._interval time since the start
++            of info's previous interval
++        """
++        if self.__interval is None:
++            return False
++        return ((time.time() - self.__tracker[info]['s'])/self.__divide) > self.__interval
++
++    def __reset_count(self, info, count=0):
++        self.__tracker[info] = {
++            's': time.time(),
++            'c': count
++        }
++
++    def wipe(self):
++        """
++            Wipes the tracker
++        """
++        self.__tracker = {}
++
++    def __limit_reached(self, info):
++        """
++            Check if count limit is reached
++        """
++        return self.__tracker[info]['c'] > self.__limit
++
++    def __in_window(self, time_point, current_time):
++        """
++            Checks if a time is in the current interval
++            window
++        """
++        return (current_time - time_point) <= self.__interval
++
++    def __update_first_reach(self, count):
++        self.__first_reach = (count > self.__limit) and not self.__first_reach
++
++    def __update_window(self, info):
++        """
++            Filters out values not in window
++            and appends current time
++        """
++        if info not in self.__tracker or 'w' not in self.__tracker[info]:
++            self.__tracker[info] = {
++                'w': []
++            }
++        # check window start
++        window_start = 0
++        current_time = time.time()
++        for i, time_point in enumerate(self.__tracker[info]['w']):
++            if self.__in_window(time_point, current_time):
++                window_start = i
++                break
++        self.__tracker[info]['w'] = self.__tracker[info]['w'][window_start:]
++        # if size is not count limit, append
++        length = len(self.__tracker[info]['w'])
++        if length < self.__limit:
++            self.__tracker[info]['w'].append(current_time)
++        return length+1
++
++    def reached(self, info) -> bool:
++        """
++            Checks if info has reached its limit
++            Returns true if it is ok
++        """
++        if self.__limit is None:
++            # Not valid if count limit is None
++            return False
++        # window check
++        if self.__sliding:
++            new_length = self.__update_window(info)
++            self.__update_first_reach(new_length)
++            return new_length > self.__limit
++        # count
++        if info not in self.__tracker or self.__interval_reached(info):
++            self.__reset_count(info)
++        self.__tracker[info]['c'] += 1
++        self.__update_first_reach(self.__tracker[info]['c'])
++        return self.__limit_reached(info)
++
++    def get_overflow_message(self):
++        """
++            Returns overflow message
++        """
++        if self.__first_reach:
++            return self._message
++        return None
+diff --git a/loguru/_logger.py b/loguru/_logger.py
+index 52a3cc4..f13f1a3 100644
+--- a/loguru/_logger.py
++++ b/loguru/_logger.py
+@@ -98,6 +98,7 @@ from ._handler import Handler
+ from ._locks_machinery import create_logger_lock
+ from ._recattrs import RecordException, RecordFile, RecordLevel, RecordProcess, RecordThread
+ from ._simple_sinks import AsyncSink, CallableSink, StandardSink, StreamSink
++from ._limiter import Limiter
+ 
+ if sys.version_info >= (3, 6):
+     from os import PathLike
+@@ -217,9 +218,10 @@ class Logger:
+     You should not instantiate a |Logger| by yourself, use ``from loguru import logger`` instead.
+     """
+ 
+-    def __init__(self, core, exception, depth, record, lazy, colors, raw, capture, patchers, extra):
++    def __init__(self, core, exception, depth, record, lazy, colors, raw, capture, patchers, extra, limit=None, interval=(None, 'm', False), overflow_msg=None):
+         self._core = core
+         self._options = (exception, depth, record, lazy, colors, raw, capture, patchers, extra)
++        self._limit = Limiter(limit=limit, interval=interval, message=overflow_msg)
+ 
+     def __repr__(self):
+         return "<loguru.logger handlers=%r>" % list(self._core.handlers.values())
+@@ -1266,7 +1268,10 @@ class Logger:
+         raw=False,
+         capture=True,
+         depth=0,
+-        ansi=False
++        ansi=False,
++        limit=None,
++        interval=(None, 'm', False),
++        overflow_msg=None
+     ):
+         r"""Parametrize a logging call to slightly change generated log message.
+ 
+@@ -1353,7 +1358,7 @@ class Logger:
+             )
+ 
+         args = self._options[-2:]
+-        return Logger(self._core, exception, depth, record, lazy, colors, raw, capture, *args)
++        return Logger(self._core, exception, depth, record, lazy, colors, raw, capture, limit=limit, interval=interval, overflow_msg=overflow_msg, *args)
+ 
+     def bind(__self, **kwargs):  # noqa: N805
+         """Bind attributes to the ``extra`` dict of each logged message record.
+@@ -1876,6 +1881,11 @@ class Logger:
+     def _log(self, level, from_decorator, options, message, args, kwargs):
+         core = self._core
+ 
++        if self._limit.reached(message):
++            message = self._limit.get_overflow_message()
++            if message is None:
++                return
++
+         if not core.handlers:
+             return
+ 
+@@ -2065,3 +2075,28 @@ class Logger:
+             "The 'stop()' method is deprecated, please use 'remove()' instead", DeprecationWarning
+         )
+         return self.remove(*args, **kwargs)
++
++    def limit(self, count=None, interval=None, sliding=False, message=None, copy=0):
++        """
++            Sets limit on current logger
++            interval=(time, unit), where unit in ['s', 'm', 'h']
++            Sliding sets sliding window
++            copy = [0, 1, 2], where 0 is modification of current, 1 is
++            "soft copy", i.e. everything except handlers are copied, and
++            2 is hard copy.
++        """
++        limiter = Limiter(count, interval, sliding, message=message)
++        if copy < 1:
++            self._limit = limiter
++            return self
++        # check if soft-copy
++        core = Core() if copy == 1 else self._core
++        new_logger = Logger(core, *self._options)
++        new_logger._limit = limiter
++        return new_logger
++
++    def wipe_limit(self):
++        """
++            Wipes the limit of the logger
++        """
++        self._limit.wipe()
+diff --git a/tests/test_limiter.py b/tests/test_limiter.py
+new file mode 100644
+index 0000000..28a2e01
+--- /dev/null
++++ b/tests/test_limiter.py
+@@ -0,0 +1,288 @@
++"""
++    Tests the _limiter.Limiter class of loguru
++"""
++
++import time
++import os
++from pathlib import Path
++from loguru._limiter import Limiter
++from loguru import logger
++
++def test_limiter_count():
++    """
++        Tests limit count
++    """
++    limiter = Limiter(limit=100)
++    for i in range(1, 1000):
++        if limiter.reached('hej'):
++            assert i > 99
++            break
++
++def test_limiter_time():
++    """
++        Tests limiter time
++    """
++    message = 'hej'
++    limiter = Limiter(limit=1, interval=0.005) # 0.1 seconds
++    assert not limiter.reached(message), 'first'
++    assert limiter.reached(message), 'second'
++    time.sleep(0.01)
++    assert not limiter.reached(message)
++    limiter = Limiter(limit=1, interval=0.01) # 0.1 seconds
++    assert not limiter.reached(message)
++    time.sleep(0.005)
++    assert limiter.reached(message)
++
++def _count_lines_that_contains(filename, message, count):
++    with open(filename, 'r', encoding='ascii') as file:
++        lines = file.read().split('\n')
++        counts = 0
++        for line in lines:
++            if message in line:
++                counts += 1
++        assert counts == count
++
++def _generate_filename_message():
++    random_suffix = os.urandom(8).hex()
++    tempfilename = '/tmp/' + random_suffix + '.log'
++    return Path(tempfilename), os.urandom(16).hex()
++
++def test_logger_count_limit():
++    """
++        Tests count limit of logger limit
++    """
++    filename, message = _generate_filename_message()
++    logger.limit(1)
++    logger.add(filename)
++    assert os.path.exists(filename)
++    for _ in range(100):
++        logger.info(message)
++    _count_lines_that_contains(filename, message, 1)
++    os.remove(filename)
++    assert not os.path.exists(filename)
++    logger.add(filename)
++    assert os.path.exists(filename)
++    # No limit
++    logger.limit()
++    for _ in range(100):
++        logger.info(message)
++    _count_lines_that_contains(filename, message, 100)
++    os.remove(filename)
++
++def _generate_hex(length=16):
++    return os.urandom(length//2).hex()
++
++def test_logger_time_limit():
++    """
++        Tests time limit of logger limit
++    """
++    filename, message = _generate_filename_message()
++    logger.limit(1, 0.01)
++    logger.add(filename)
++    assert os.path.exists(filename)
++    logger.info(message)
++    for _ in range(100):
++        logger.info(message)
++    _count_lines_that_contains(filename, message, 1)
++    os.remove(filename)
++    logger.add(filename)
++    _count_lines_that_contains(filename, message, 0)
++    logger.limit(10, 0.1)
++    for _ in range(50):
++        time.sleep(0.001)
++        logger.info(message)
++    _count_lines_that_contains(filename, message, 10)
++    os.remove(filename)
++
++def test_window():
++    """
++        Tests window of limiter
++    """
++    limiter = Limiter(0, 0.1, True)
++    message = _generate_hex()
++    assert limiter.reached(message)
++    limiter = Limiter(2, 0.1, True)
++    assert not limiter.reached(message)
++    time.sleep(0.05)
++    assert not limiter.reached(message)
++    assert limiter.reached(message)
++    time.sleep(0.05)
++    assert not limiter.reached(message), 'expected buffer empty'
++
++def test_logger_window(writer):
++    """
++        Test window functioning for logger
++    """
++    # clean writer
++    writer.clear()
++    assert len(writer.written) == 0
++
++    # 1 2  ... 3 | 4 5
++    logger.limit(3, 0.1, sliding=True)
++    logger.add(writer)
++    message = _generate_hex()
++    # write two instantly
++    logger.info(message)
++    logger.info(message)
++    assert _count_in(writer.written, message) == 2
++    # one 'lagging'
++    time.sleep(0.05)
++    logger.info(message)
++    assert _count_in(writer.written, message) == 3
++    # sleep sufficiently to pass window
++    time.sleep(0.05)
++    # should be space for two more now
++    logger.info(message)
++    logger.info(message)
++    logger.info(message)
++    assert _count_in(writer.written, message) == 5, 'expected window to limit'
++
++    # clean writer
++    writer.clear()
++    assert _count_in(writer.written, message) == 0
++
++    # Now without sliding
++    logger.limit(3, 0.1, sliding=False)
++    message = _generate_hex()
++    # write two instantly
++    logger.info(message) # 1
++    logger.info(message) # 2
++    assert _count_in(writer.written, message) == 2
++    # one 'lagging'
++    time.sleep(0.05)
++    logger.info(message) # 3
++    assert _count_in(writer.written, message) == 3
++    # sleep sufficiently to pass window
++    time.sleep(0.05)
++    logger.info(message) # 4, only 1 in buffer
++    logger.info(message) # 5
++    logger.info(message) # 6
++    assert _count_in(writer.written, message) == 6
++
++def test_logger_limit_copy(writer):
++    """
++        Test limit copy function
++    """
++    # clean writer
++    writer.clear()
++    assert len(writer.written) == 0
++    logger.add(writer)
++    message = _generate_hex()
++    for _ in range(10):
++        logger.info(message)
++    assert _count_in(writer.written, message) == 10
++    # make a hard copy of handlers
++    new_logger = logger.limit(0, copy=2)
++    for _ in range(10):
++        new_logger.info(message)
++    assert _count_in(writer.written, message) == 10
++    # now alter to accept 1
++    new_logger.limit(1)
++    for _ in range(10):
++        new_logger.info(message)
++    assert _count_in(writer.written, message) == 11
++    # testing soft copy, core is not copied
++    new_logger = new_logger.limit(copy=1)
++    for _ in range(10):
++        new_logger.info(message)
++    assert _count_in(writer.written, message) == 11
++    new_logger.add(writer)
++    new_logger.info(message)
++    assert _count_in(writer.written, message) == 12
++
++def _count_in(writes, what) -> int:
++    count = 0
++    written = writes.written if hasattr(writes, 'written') else writes
++    for line in written:
++        if what in line:
++            count += 1
++    return count
++
++def test_logger_overflow_message(writer):
++    """
++        Test limit copy function
++    """
++    # clean writer
++    writer.clear()
++    assert len(writer.written) == 0
++    logger.add(writer)
++    message = _generate_hex()
++    overflow = _generate_hex()
++    logger.limit(1, message=overflow)
++    logger.info(message)
++    assert _count_in(writer, message) == 1
++    logger.info(message)
++    logger.info(message)
++    assert _count_in(writer, message) == 1, 'expected exactly one message'
++    assert _count_in(writer, overflow) == 1, 'expected exactly one overflow message'
++
++def test_logger_levels(writer):
++    """
++        Test limit copy function
++    """
++    # clean writer
++    writer.clear()
++    assert len(writer.written) == 0
++    logger.add(writer)
++    logger.limit(1)
++    message = _generate_hex()
++    # Test all types of logging
++    logger.warning(message)
++    logger.error(message)
++    logger.info(message)
++    logger.trace(message)
++    logger.critical(message)
++    logger.debug(message)
++    logger.exception(message)
++    logger.success(message)
++    assert _count_in(writer, message) == 1, 'expected all logging to be limited'
++    assert len(writer.written) == 1, 'expected one message written'
++
++def test_logger_wipe_limit(writer):
++    """
++        Tests the wiping functionality
++    """
++    # clean writer
++    writer.clear()
++    assert len(writer.written) == 0
++    logger.add(writer)
++    logger.limit(1)
++    message = _generate_hex()
++    # Test all types of logging
++    logger.warning(message)
++    logger.warning(message)
++    logger.warning(message)
++    logger.warning(message)
++    assert _count_in(writer, message) == 1, 'expected reset all to reset count'
++    logger.wipe_limit()
++    logger.warning(message)
++    assert _count_in(writer, message) == 2, 'expected reset all to reset count'
++    assert len(writer.written) == 2
++
++def test_logger_time_min_and_hours(writer):
++    """
++        Tests time limit of logger limit
++    """
++    # test hours
++    logger.limit(1, (0.1/3600.0, 'h'))
++    logger.add(writer)
++    message = _generate_hex()
++    logger.info(message)
++    assert _count_in(writer, message) == 1
++    logger.info(message)
++    assert _count_in(writer, message) == 1
++    time.sleep(0.15)
++    logger.info(message)
++    assert _count_in(writer, message) == 2
++
++    writer.clear()
++    # test minutes
++    logger.limit(1, (0.1/60.0, 'm'))
++    message = _generate_hex()
++    logger.info(message)
++    assert _count_in(writer, message) == 1
++    logger.info(message)
++    assert _count_in(writer, message) == 1
++    time.sleep(0.15)
++    logger.info(message)
++    assert _count_in(writer, message) == 2
